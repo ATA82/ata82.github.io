@@ -1,0 +1,889 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+so <- qs::qread("~/Desktop/analysis/snRNASeq_metabolic_changes_in_neurons_of_hippocampus/results/seurat_obj_int_harmony.clustering_osi_annotated_clean.qs")
+so <- so@assays$RNA@layers$counts
+
+# Total number of elements in the matrix
+total <- nrow(so) * ncol(so)
+
+# Count of non-zero entries
+nonzero_count <- length(so@x)
+
+# Count of zeros (not stored)
+zero_count <- total - nonzero_count
+
+# Determine the number of bins needed.
+# Add 1 because counts start at 0, which is not stored in m@x.
+nbins <- if (nonzero_count > 0) max(so@x) + 1 else 1
+
+# Tabulate non-zero values efficiently.
+# Shift m@x by 1 (because tabulate() works on positive integers)
+nonzero_tab <- tabulate(so@x + 1, nbins = nbins)
+
+# Adjust the count for zero (bin 1 corresponds to value 0)
+nonzero_tab[1] <- nonzero_tab[1] + zero_count
+
+# Name the bins to correspond with counts (0, 1, 2, ...)
+names(nonzero_tab) <- 0:(nbins - 1)
+
+df <- (nonzero_tab |> as.data.frame()) |> tibble::add_column(level=rownames((nonzero_tab |> as.data.frame())))
+
+library(ggplot2)
+library(dplyr)
+
+df$prop <- round(df$nonzero_tab/sum(df$nonzero_tab),10)
+df <- df |> dplyr::filter(prop > 0 & nonzero_tab > 10)
+
+df |> dplyr::arrange(-prop)
+df$level <- as.numeric(df$level)
+ggplot(df |> dplyr::arrange(-prop) %>% dplyr::filter(level %in% 1:100) , aes(x=level, y=prop)) + geom_col() 
+
+```
+
+```{r}
+library(MASS)
+library(fitdistrplus)
+
+library(Matrix)
+
+# Suppose 'counts' is your dgCMatrix from Seurat.
+# For example, if your seurat object is called 'seurat_obj':
+# counts <- GetAssayData(seurat_obj, slot = "counts")
+
+total_entries <- nrow(counts) * ncol(counts)
+nonzero_entries <- length(counts@x)
+zero_entries <- total_entries - nonzero_entries
+
+# Summary for non-zero values
+mean_nonzero <- mean(counts@x)
+var_nonzero <- var(counts@x)
+
+cat("Total entries:", total_entries, "\n")
+cat("Non-zero entries:", nonzero_entries, "\n")
+cat("Zero entries:", zero_entries, "\n")
+cat("Mean (non-zero):", mean_nonzero, "\n")
+cat("Variance (non-zero):", var_nonzero, "\n")
+# Determine the maximum count present in the non-zero entries.
+max_count <- max(counts@x)
+
+# Create a frequency vector for counts 0 to max_count.
+freq <- numeric(max_count + 1)
+# count of zeros:
+freq[1] <- zero_entries
+# For nonzero counts, use tabulate; note that counts@x are >0.
+freq[-1] <- tabulate(counts@x, nbins = max_count)
+
+# Print frequency table (for example, count 0, 1, 2, …)
+print(freq)
+
+# Reconstruct vector from frequency table if memory allows:
+all_counts <- rep(0:max_count, times = freq)
+
+library(MASS)
+nb_fit <- fitdistr(all_counts, densfun = "Negative Binomial")
+print(nb_fit)
+
+nb_fit <- fitdist(c(counts@x |> as.vector(), rep(0,nrow(counts)*ncol(counts)-length(counts@x))), "nbinom")
+#summary(nb_fit)
+
+
+library(MASS)
+library(ggplot2)
+
+# If you already ran:
+# nb_fit <- fitdistr(all_counts, densfun = "Negative Binomial")
+# and printed nb_fit
+
+# Get the fitted parameters: size and mu.
+size_est <- nb_fit$estimate["size"]
+mu_est <- nb_fit$estimate["mu"]
+
+# Create a range of counts (from 0 to the maximum count observed)
+max_count <- max(all_counts)
+counts_seq <- 0:max_count
+
+# Compute the fitted NB probabilities for each count
+fitted_probs <- dnbinom(counts_seq, size = size_est, mu = mu_est)
+
+# Scale the fitted probabilities to expected frequencies (total observations)
+total_obs <- length(all_counts)
+expected_freq <- fitted_probs * total_obs
+
+# Compute observed frequencies
+observed_freq <- as.numeric(table(factor(all_counts, levels = counts_seq)))
+
+# Create a dataframe for plotting
+df <- data.frame(
+  Count = counts_seq,
+  Observed = observed_freq,
+  Expected = expected_freq
+)
+
+
+# Melt the data for easier ggplot2 handling (optional)
+library(reshape2)
+df_melted <- melt(df, id.vars = "Count", variable.name = "Type", value.name = "Frequency")
+
+# Plot using ggplot2
+ggplot(df_melted, aes(x = Count, y = Frequency, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", alpha = 0.7) +
+  
+  scale_fill_manual(values = c("Observed" = "skyblue", "Expected"="red")) +
+  labs(title = "Observed vs. Expected Frequencies (NB Fit)",
+       x = "Count",
+       y = "Frequency") +
+  theme_minimal() + scale_y_sqrt() + xlim(-1,10)
+
+```
+
+```{r}
+var(counts |> as.vector())
+mean(counts |> as.vector())
+```
+
+```{r}
+# Load necessary libraries
+library(fitdistrplus)
+library(MASS)    # for NB and Poisson density functions
+library(ggplot2)
+
+# ---------------------------
+# STEP 1: Fit the Models
+# ---------------------------
+# Fit a Poisson model to the data
+fit_pois <- fitdist(all_counts, "pois")
+# Fit a Negative Binomial model to the data
+fit_nb <- fitdist(all_counts, "nbinom")
+
+# ---------------------------
+# STEP 2: Summary of the Fits
+# ---------------------------
+cat("Poisson Model Summary:\n")
+print(summary(fit_pois))
+cat("\nNegative Binomial Model Summary:\n")
+print(summary(fit_nb))
+
+# ---------------------------
+# STEP 3: Compare AIC and BIC
+# ---------------------------
+cat("AIC - Poisson: ", fit_pois$aic, "\n")
+cat("AIC - NB: ", fit_nb$aic, "\n")
+cat("BIC - Poisson: ", fit_pois$bic, "\n")
+cat("BIC - NB: ", fit_nb$bic, "\n")
+
+# ---------------------------
+# STEP 4: Goodness-of-Fit Statistics
+# ---------------------------
+# gofstat() provides several measures including Chi-square tests, 
+# Cramer-von Mises, and Anderson-Darling statistics.
+gof_pois <- gofstat(fit_pois)
+gof_nb <- gofstat(fit_nb)
+
+cat("\nGoodness-of-Fit for Poisson Model:\n")
+print(gof_pois)
+cat("\nGoodness-of-Fit for NB Model:\n")
+print(gof_nb)
+
+# ---------------------------
+# STEP 5: Diagnostic Plots
+# ---------------------------
+# The plot() function for fitdist objects shows:
+#  - Density plot (observed vs fitted)
+#  - Cumulative distribution plot
+#  - Q-Q plot
+#  - P-P plot
+
+# Set up a 2x2 grid for plotting diagnostics.
+par(mfrow = c(2, 2))
+plot(fit_pois, main = "Poisson Model Diagnostics")
+plot(fit_nb, main = "NB Model Diagnostics")
+
+# If you prefer ggplot2-based plots, you can also extract the fitted densities
+# and compare them with histograms. For example:
+# Create a histogram of the observed counts and overlay fitted curves.
+counts_seq <- 0:max(all_counts)
+# Fitted densities scaled to total number of observations
+pois_dens <- dpois(counts_seq, lambda = fit_pois$estimate["lambda"]) * length(all_counts)
+nb_dens <- dnbinom(counts_seq, size = fit_nb$estimate["size"], mu = fit_nb$estimate["mu"]) * length(all_counts)
+
+df_plot <- data.frame(
+  Count = counts_seq,
+  Observed = as.numeric(table(factor(all_counts, levels = counts_seq))),
+  Poisson = pois_dens,
+  NB = nb_dens
+)
+
+# Melt the dataframe for ggplot2
+library(reshape2)
+df_melted <- melt(df_plot, id.vars = "Count", variable.name = "Model", value.name = "Frequency")
+
+# Plot with bars for observed and lines for model fits.
+ggplot(df_plot, aes(x = Count)) +
+  geom_bar(aes(y = Observed), stat = "identity", fill = "skyblue", alpha = 0.7) +
+  geom_line(aes(y = Poisson), color = "red", size = 1.2) +
+  geom_line(aes(y = NB), color = "darkgreen", size = 1.2) +
+  labs(title = "Observed vs. Fitted Frequencies",
+       x = "Count",
+       y = "Frequency") +
+  theme_classic() + xlim(-1,10) + scale_y_sqrt()
+
+
+# Plot with bars for observed and lines for model fits.
+ggplot(df_plot, aes(x = Count)) +
+  geom_bar(aes(y = Expected), stat = "identity", fill = "skyblue", alpha = 0.7) +
+  geom_line(aes(y = Poisson), color = "red", size = 1.2) +
+  geom_line(aes(y = NB), color = "darkgreen", size = 1.2) +
+  labs(title = "Observed vs. Fitted Frequencies",
+       x = "Count",
+       y = "Frequency") +
+  theme_classic() + xlim(-1,10) + scale_y_sqrt()
+
+```
+```{r}
+# Load necessary libraries
+library(Matrix)
+library(MASS)
+library(ggplot2)
+library(reshape2)
+
+# Suppose 'counts' is your dgCMatrix (genes x cells)
+# For example:
+# counts <- GetAssayData(seurat_obj, slot = "counts")
+
+# Optionally, filter out genes with very low total counts:
+min_total <- 10  # Example threshold
+gene_totals <- rowSums(counts)
+keep_genes <- gene_totals >= min_total
+counts_filtered <- counts[keep_genes, ]
+gene_names <- rownames(counts_filtered)
+
+# Create a list to store NB parameters for each gene and a list of diagnostic data frames.
+nb_params <- list()
+diag_list <- list()
+
+for (i in seq_len(nrow(counts_filtered))) {
+  # Extract counts for gene 'i'
+  gene_counts <- as.vector(counts_filtered[i, ])
+  
+  # (Optional) Skip genes with no variability (all zeros or nearly all zeros)
+  if (all(gene_counts == 0)) next
+  
+  # Fit the NB model for this gene; handle errors gracefully with try()
+  fit <- try(fitdistr(gene_counts, densfun = "Negative Binomial"), silent = TRUE)
+  if (inherits(fit, "try-error")) next
+  
+  nb_params[[ gene_names[i] ]] <- fit$estimate
+  
+  # Generate observed frequency counts for the gene
+  max_count <- max(gene_counts)
+  counts_seq <- 0:max_count
+  
+  # Create frequency vector:
+  observed_freq <- numeric(max_count + 1)
+  # Count zeros (since sparse matrix stores only nonzeros)
+  total_cells <- length(gene_counts)
+  nonzero_count <- sum(gene_counts != 0)
+  observed_freq[1] <- total_cells - nonzero_count  
+  if (max_count > 0) {
+    observed_freq[-1] <- tabulate(gene_counts[gene_counts > 0], nbins = max_count)
+  }
+  
+  # Compute fitted probabilities and expected frequencies
+  size_est <- fit$estimate["size"]
+  mu_est <- fit$estimate["mu"]
+  fitted_probs <- dnbinom(counts_seq, size = size_est, mu = mu_est)
+  expected_freq <- fitted_probs * total_cells
+  
+  # Build a diagnostic data frame for this gene
+  df_diag <- data.frame(
+    Count = counts_seq,
+    Observed = observed_freq,
+    Expected = expected_freq
+  )
+  
+  diag_list[[ gene_names[i] ]] <- df_diag
+  
+  # Plot diagnostics for a few example genes:
+  if (i <= 3) {  # Just plot for the first 3 genes kept for demonstration
+    df_melted <- melt(df_diag, id.vars = "Count",
+                      variable.name = "Type", value.name = "Frequency")
+    p <- ggplot(df_melted, aes(x = Count, y = Frequency, fill = Type)) +
+      geom_bar(stat = "identity", position = "dodge", color = "black", alpha = 0.7) +
+      geom_line(data = subset(df_melted, Type == "Expected"),
+                aes(x = Count, y = Frequency), color = "red", size = 1.2) +
+      labs(title = paste("Observed vs Expected (NB) for", gene_names[i]),
+           x = "Count", y = "Frequency") +
+      theme_minimal() +
+      scale_y_sqrt() + xlim(-0.5, max_count + 0.5)
+    print(p)
+  }
+}
+
+# Optionally, examine the NB parameter estimates:
+nb_params_df <- do.call(rbind, lapply(names(nb_params), function(g) {
+  cbind(Gene = g, t(nb_params[[g]]))
+}))
+print(nb_params_df)
+
+
+```
+
+
+```{r}
+
+library(Matrix)
+library(MASS)
+library(ggplot2)
+
+# Suppose 'counts' is your dgCMatrix (genes x cells)
+# Optionally, filter out genes with very low total counts:
+min_total <- 10  
+gene_totals <- rowSums(counts)
+keep_genes <- gene_totals >= min_total
+counts_filtered <- counts[keep_genes, ]
+gene_names <- rownames(counts_filtered)
+
+# Initialize a data frame to collect the NB parameters and GoF statistic per gene:
+results <- data.frame(Gene = character(),
+                      mu = numeric(),
+                      size = numeric(),
+                      chi_sq = numeric(),
+                      df = numeric(),
+                      p_value = numeric(),
+                      stringsAsFactors = FALSE)
+
+for (i in seq_len(nrow(counts_filtered))) {
+  gene_counts <- as.vector(counts_filtered[i, ])
+  
+  # Skip genes with no variability
+  if (all(gene_counts == 0)) next
+  
+  fit <- try(fitdistr(gene_counts, densfun = "Negative Binomial"), silent = TRUE)
+  if (inherits(fit, "try-error")) next
+  
+  size_est <- fit$estimate["size"]
+  mu_est <- fit$estimate["mu"]
+  
+  total_cells <- length(gene_counts)
+  max_count <- max(gene_counts)
+  counts_seq <- 0:max_count
+  
+  # Build the observed frequency vector without expanding the full data:
+  observed_freq <- numeric(max_count + 1)
+  # Zeros (not stored explicitly in the sparse matrix)
+  observed_freq[1] <- total_cells - sum(gene_counts > 0)
+  if(max_count > 0) {
+    observed_freq[-1] <- tabulate(gene_counts[gene_counts > 0], nbins = max_count)
+  }
+  
+  # Calculate the expected probabilities and frequencies based on the NB model
+  fitted_probs <- dnbinom(counts_seq, size = size_est, mu = mu_est)
+  expected_freq <- fitted_probs * total_cells
+  
+  # Ensure expected frequencies are nonzero for chi-square computation:
+  # (Sometimes, you may wish to combine bins with very low expected counts.)
+  # For simplicity, we assume expected_freq are > 0.
+  chi_sq <- sum((observed_freq - expected_freq)^2 / expected_freq)
+  
+  # Degrees of freedom:
+  # Number of bins minus the number of estimated parameters (here 2) minus 1.
+  df <- length(observed_freq) - 2 - 1
+  
+  # Compute p-value from the chi-square distribution:
+  p_val <- pchisq(chi_sq, df = df, lower.tail = FALSE)
+  
+  # Append results to the dataframe:
+  results <- rbind(results, data.frame(Gene = gene_names[i],
+                                       mu = mu_est,
+                                       size = size_est,
+                                       chi_sq = chi_sq,
+                                       df = df,
+                                       p_value = p_val,
+                                       stringsAsFactors = FALSE))
+}
+
+# View the summarized results:
+print(results)
+
+# Determine how many genes have an acceptable fit:
+acceptable_fit <- sum(results$p_value > 0.05, na.rm=TRUE)
+total_genes_fitted <- nrow(results)
+cat("Proportion of genes well fit by NB:", acceptable_fit / total_genes_fitted, "\n")
+
+library(dplyr)
+results %>% filter(!is.nan(p_value))
+```
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+# Assume nb_params_df already exists. Here is a simulated example:
+# For demonstration, we'll create a small example dataframe.
+set.seed(42)
+
+
+reults.red <- results %>% filter(!is.nan(p_value))
+
+nb_params_df <- reults.red
+
+# 1. Summary Statistics for Goodness-of-Fit
+summary_stats <- nb_params_df %>% 
+  summarise(
+    total_genes = n(),
+    mean_p_value = mean(p_value),
+    median_p_value = median(p_value),
+    prop_good_fit = mean(p_value > 0.05)  # proportion with p > 0.05 
+  )
+print(summary_stats)
+
+# 2. Histogram of the p-values
+p_hist <- ggplot(nb_params_df, aes(x = p_value)) +
+  geom_histogram(binwidth = 0.05, fill = "skyblue", color = "black", boundary = 0) +
+  labs(title = "Distribution of Goodness-of-Fit p-values",
+       x = "p-value",
+       y = "Number of Genes") +
+  theme_minimal()
+print(p_hist)
+
+# 3. Scatter Plot: p-value vs. estimated mean (mu)
+p_mu <- ggplot(nb_params_df, aes(x = mu, y = p_value)) +
+  geom_point(color = "darkgreen", alpha = 0.7) +
+  geom_hline(yintercept = 0.05, linetype = "dashed", color = "red") +
+  labs(title = "p-value vs. Estimated Mean (mu)",
+       x = "Estimated mean (mu)",
+       y = "p-value") +
+  theme_minimal()
+print(p_mu)
+
+# 4. Scatter Plot: p-value vs. size parameter (dispersion)
+p_size <- ggplot(nb_params_df, aes(x = size, y = p_value)) +
+  geom_point(color = "purple", alpha = 0.7) +
+  geom_hline(yintercept = 0.05, linetype = "dashed", color = "red") +
+  labs(title = "p-value vs. Estimated Dispersion Parameter (size)",
+       x = "Estimated Dispersion (size)",
+       y = "p-value") +
+  theme_minimal()
+print(p_size)
+
+# 5. Optionally, you may also examine a combined plot
+library(gridExtra)
+grid.arrange(p_hist + scale_y_sqrt(), p_mu + scale_y_sqrt(), p_size + scale_y_sqrt(), ncol=1)
+
+
+
+
+
+```
+
+
+```{r}
+
+library(Matrix)
+library(MASS)
+library(ggplot2)
+
+# Suppose 'counts' is your dgCMatrix (genes x cells)
+# Optionally, filter out genes with very low total counts:
+min_total <- 10  
+gene_totals <- rowSums(counts)
+keep_genes <- gene_totals >= min_total
+counts_filtered <- counts[keep_genes, ]
+gene_names <- rownames(counts_filtered)
+
+# Initialize a data frame to collect the NB parameters and GoF statistic per gene:
+results <- data.frame(Gene = character(),
+                      mu = numeric(),
+                      size = numeric(),
+                      chi_sq = numeric(),
+                      df = numeric(),
+                      p_value = numeric(),
+                      stringsAsFactors = FALSE)
+
+for (i in seq_len(nrow(counts_filtered))) {
+  gene_counts <- as.vector(counts_filtered[i, ])
+  
+  # Skip genes with no variability
+  if (all(gene_counts == 0)) next
+  
+  fit <- try(fitdistr(gene_counts, densfun = "Poisson"), silent = TRUE)
+  if (inherits(fit, "try-error")) next
+  
+  size_est <- fit$estimate["size"]
+  mu_est <- fit$estimate["mu"]
+  
+  total_cells <- length(gene_counts)
+  max_count <- max(gene_counts)
+  counts_seq <- 0:max_count
+  
+  # Build the observed frequency vector without expanding the full data:
+  observed_freq <- numeric(max_count + 1)
+  # Zeros (not stored explicitly in the sparse matrix)
+  observed_freq[1] <- total_cells - sum(gene_counts > 0)
+  if(max_count > 0) {
+    observed_freq[-1] <- tabulate(gene_counts[gene_counts > 0], nbins = max_count)
+  }
+  
+  # Calculate the expected probabilities and frequencies based on the NB model
+  fitted_probs <- dnbinom(counts_seq, size = size_est, mu = mu_est)
+  expected_freq <- fitted_probs * total_cells
+  
+  # Ensure expected frequencies are nonzero for chi-square computation:
+  # (Sometimes, you may wish to combine bins with very low expected counts.)
+  # For simplicity, we assume expected_freq are > 0.
+  chi_sq <- sum((observed_freq - expected_freq)^2 / expected_freq)
+  
+  # Degrees of freedom:
+  # Number of bins minus the number of estimated parameters (here 2) minus 1.
+  df <- length(observed_freq) - 2 - 1
+  
+  # Compute p-value from the chi-square distribution:
+  p_val <- pchisq(chi_sq, df = df, lower.tail = FALSE)
+  
+  # Append results to the dataframe:
+  results <- rbind(results, data.frame(Gene = gene_names[i],
+                                       mu = mu_est,
+                                       size = size_est,
+                                       chi_sq = chi_sq,
+                                       df = df,
+                                       p_value = p_val,
+                                       stringsAsFactors = FALSE))
+}
+
+# View the summarized results:
+print(results)
+
+# Determine how many genes have an acceptable fit:
+acceptable_fit <- sum(results$p_value > 0.05, na.rm=TRUE)
+total_genes_fitted <- nrow(results)
+cat("Proportion of genes well fit by NB:", acceptable_fit / total_genes_fitted, "\n")
+```
+
+
+
+```{r}
+# Load required libraries
+library(MASS)
+library(fitdistrplus)
+library(Matrix)
+library(ggplot2)
+library(reshape2)
+
+# --- Step 1: Prepare the Data from dgCMatrix ---
+# Suppose 'counts' is your dgCMatrix from Seurat.
+# Example:
+# counts <- GetAssayData(seurat_obj, slot = "counts")
+
+# Calculate total entries, zeros, and summarize non-zero entries
+total_entries <- nrow(counts) * ncol(counts)
+nonzero_entries <- length(counts@x)
+zero_entries <- total_entries - nonzero_entries
+
+mean_nonzero <- mean(counts@x)
+var_nonzero <- var(counts@x)
+
+cat("Total entries:", total_entries, "\n")
+cat("Non-zero entries:", nonzero_entries, "\n")
+cat("Zero entries:", zero_entries, "\n")
+cat("Mean (non-zero):", mean_nonzero, "\n")
+cat("Variance (non-zero):", var_nonzero, "\n")
+
+# Determine maximum observed count (from non-zeros)
+max_count <- max(counts@x)
+
+# Create a frequency vector for counts 0 to max_count
+freq <- numeric(max_count + 1)
+freq[1] <- zero_entries  # zero count
+freq[-1] <- tabulate(counts@x, nbins = max_count)
+names(freq) <- 0:max_count
+
+print(freq)
+
+# (Optional) Reconstruct a full vector from freq if memory allows (for fitting/testing):
+all_counts <- rep(0:max_count, times = freq)
+
+# --- Step 2: Fit a Poisson Model ---
+# Use fitdistr() to estimate the Poisson parameter lambda
+pois_fit <- fitdistr(all_counts, densfun = "Poisson")
+print(pois_fit)
+# The Poisson parameter is "lambda"
+lambda_est <- pois_fit$estimate["lambda"]
+
+# --- Step 3: Compute Expected Frequencies Under Poisson ---
+# Create a sequence of counts (from 0 to max_count)
+counts_seq <- 0:max_count
+
+# Compute Poisson PMF for each count and scale to get expected frequencies
+fitted_probs <- dpois(counts_seq, lambda = lambda_est)
+total_obs <- length(all_counts)
+expected_freq <- fitted_probs * total_obs
+
+# Observed frequencies (as computed above)
+observed_freq <- as.numeric(table(factor(all_counts, levels = counts_seq)))
+
+# Create a dataframe for plotting
+df <- data.frame(
+  Count = counts_seq,
+  Observed = observed_freq,
+  Expected = expected_freq
+)
+
+# --- Step 4: Visualization with ggplot2 ---
+# Melt the dataframe to long format for ggplot2
+df_melted <- melt(df, id.vars = "Count", variable.name = "Type", value.name = "Frequency")
+
+# Create the plot:
+ggplot(df_melted, aes(x = Count, y = Frequency, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", alpha = 0.7) +
+  scale_fill_manual(values = c("Observed" = "skyblue", "Expected" = "red")) +
+  labs(title = "Observed vs Expected Frequencies (Poisson Fit)",
+       x = "Count",
+       y = "Frequency (square-root scale)") +
+  theme_minimal() +
+  scale_y_sqrt() +
+  xlim(-1, 10)
+
+```
+
+
+
+```{r}
+negLogLikNB <- function(params, freq) {
+  mu <- params[1]
+  theta <- params[2]
+  
+  # Ensure positive parameters
+  if(mu <= 0 || theta <= 0) return(Inf)
+  
+  # Create a sequence for the counts
+  y <- 0:(length(freq)-1)
+  
+  # NB density (log density)
+  log_nb <- lgamma(y + theta) - lgamma(theta) - lgamma(y + 1) +
+    y * log(mu) - y * log(mu + theta) +
+    theta * log(theta) - theta * log(mu + theta)
+  
+  # Total log-likelihood is weighted by freq:
+  loglik <- sum(freq * log_nb)
+  
+  # Return negative log-likelihood (to minimize)
+  return(-loglik)
+}
+
+# Initial guesses for the parameters; you may adjust these based on data summaries.
+init_params <- c(mu = mean(so@x), theta = 1)
+
+# Optimize the negative log-likelihood
+opt_result <- optim(init_params, negLogLikNB, freq = freq,
+                    method = "L-BFGS-B",
+                    lower = c(1e-3, 1e-3))  # enforcing positive parameters
+
+opt_result$par  # Estimated parameters
+
+y <- 0:(length(freq)-1)
+fitted_probs <- dnbinom(y, size = opt_result$par[2], mu = opt_result$par[1])
+# Expected frequencies based on the model:
+expected_freq <- fitted_probs * total_entries
+
+# Compare expected vs. observed frequencies:
+comparison <- data.frame(
+  Count = y,
+  Observed = freq,
+  Expected = expected_freq
+)
+print(comparison)
+
+library(reshape2)
+library(ggplot2)
+# Melt the data frame for ggplot2 (to plot both series on the same graph)
+df_melted <- melt(comparison, id.vars = "Count", variable.name = "Type", value.name = "Frequency")
+
+# Plot using ggplot2: points and lines for each series
+ggplot(df_melted, aes(x = Count, y = Frequency, color = Type)) +
+  geom_point(size = 1, alpha=.5) +
+#  geom_line(linewidth = .5) +
+  labs(title = "Observed vs Expected Frequencies",
+       x = "Count",
+       y = "Frequency") +
+  theme_minimal() + scale_y_log10() + facet_wrap(~Type)
+
+```
+```{r}
+# Load libraries
+library(Matrix)
+library(ggplot2)
+library(reshape2)
+library(MASS)  # for functions like optim and gamma computations
+
+counts <- so
+
+# Suppose 'counts' is your huge dgCMatrix from Seurat.
+# We compute the frequency table without reconstructing the full matrix.
+total_entries <- nrow(counts) * ncol(counts)
+nonzero_entries <- length(counts@x)
+zero_count <- total_entries - nonzero_entries
+
+max_count <- max(counts@x)
+# Create a frequency vector for counts 0:max_count (length = max_count+1)
+freq <- numeric(max_count + 1)
+freq[1] <- zero_count
+freq[-1] <- tabulate(counts@x, nbins = max_count)
+names(freq) <- 0:max_count
+
+# Create a sequence of counts
+y <- 0:max_count
+
+# Define the custom negative log-likelihood (negLogLik) function for the NB model.
+# Here the NB PMF is given by:
+# NB(y | mu, theta) = Gamma(y+theta) / (Gamma(theta) * y!) * (mu/(mu+theta))^y * (theta/(mu+theta))^theta
+negLogLikNB <- function(params, freq, y) {
+  mu <- params[1]
+  theta <- params[2]
+  if(mu <= 0 || theta <= 0) return(Inf)
+  # Compute log NB likelihood for each count y (vectorized)
+  log_nb <- lgamma(y + theta) - lgamma(theta) - lgamma(y + 1) +
+    y * log(mu) - y * log(mu + theta) +
+    theta * log(theta) - theta * log(mu + theta)
+  
+  # Weighted log likelihood: sum(freq * log(probabilities))
+  loglik <- sum(freq * log_nb)
+  
+  # We want to minimize negative log likelihood
+  return(-loglik)
+}
+
+# Optimize the negative log-likelihood using the frequency table
+# Provide reasonable starting values for mu and theta.
+init_params <- c(mu = mean(counts@x), theta = 1)
+opt_result <- optim(init_params, negLogLikNB, freq = freq, y = y,
+                    method = "L-BFGS-B", lower = c(1e-3, 1e-3))
+
+# Extract estimated parameters
+mu_est <- opt_result$par[1]
+theta_est <- opt_result$par[2]
+
+# Compute the expected probabilities from the NB model for counts y,
+# then expected frequencies by multiplying by the total number of entries.
+expected_probs <- dnbinom(y, size = theta_est, mu = mu_est)
+expected_freq <- expected_probs * total_entries
+
+# Create the comparison dataframe
+comparison <- data.frame(
+  Count = y,
+  Observed = freq,
+  Expected = expected_freq
+)
+
+print(comparison)
+
+# Melt the dataframe for plotting using ggplot2 (long format)
+comparison_melted <- melt(comparison, id.vars = "Count", variable.name = "Type", value.name = "Frequency")
+
+p <- ggplot(comparison_melted, aes(x = Count, y = Frequency, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+
+  labs(title = "Observed vs Expected Frequencies", 
+       x = "Count", y = "Frequency (log scale)") +
+  theme_minimal()
+
+# Optionally, if focusing on low counts (say counts 0 to 10) improves visualization:
+p_zoom <- p + xlim(-1, 10)
+
+# Print the plot(s)
+print(p)
+print(p_zoom + scale_y_sqrt())
+
+```
+
+```{r}
+library(SeuratData)
+InstallData("pbmc3k")
+pbmc3k <- Seurat::UpdateSeuratObject(pbmc3k)
+counts <- pbmc3k@assays$RNA@counts
+
+# Suppose 'counts' is your huge dgCMatrix from Seurat.
+# We compute the frequency table without reconstructing the full matrix.
+total_entries <- nrow(counts) * ncol(counts)
+nonzero_entries <- length(counts@x)
+zero_count <- total_entries - nonzero_entries
+
+max_count <- max(counts@x)
+# Create a frequency vector for counts 0:max_count (length = max_count+1)
+freq <- numeric(max_count + 1)
+freq[1] <- zero_count
+freq[-1] <- tabulate(counts@x, nbins = max_count)
+names(freq) <- 0:max_count
+
+# Create a sequence of counts
+y <- 0:max_count
+
+# Define the custom negative log-likelihood (negLogLik) function for the NB model.
+# Here the NB PMF is given by:
+# NB(y | mu, theta) = Gamma(y+theta) / (Gamma(theta) * y!) * (mu/(mu+theta))^y * (theta/(mu+theta))^theta
+negLogLikNB <- function(params, freq, y) {
+  mu <- params[1]
+  theta <- params[2]
+  if(mu <= 0 || theta <= 0) return(Inf)
+  # Compute log NB likelihood for each count y (vectorized)
+  log_nb <- lgamma(y + theta) - lgamma(theta) - lgamma(y + 1) +
+    y * log(mu) - y * log(mu + theta) +
+    theta * log(theta) - theta * log(mu + theta)
+  
+  # Weighted log likelihood: sum(freq * log(probabilities))
+  loglik <- sum(freq * log_nb)
+  
+  # We want to minimize negative log likelihood
+  return(-loglik)
+}
+
+# Optimize the negative log-likelihood using the frequency table
+# Provide reasonable starting values for mu and theta.
+init_params <- c(mu = mean(counts@x), theta = 1)
+opt_result <- optim(init_params, negLogLikNB, freq = freq, y = y,
+                    method = "L-BFGS-B", lower = c(1e-3, 1e-3))
+
+# Extract estimated parameters
+mu_est <- opt_result$par[1]
+theta_est <- opt_result$par[2]
+
+# Compute the expected probabilities from the NB model for counts y,
+# then expected frequencies by multiplying by the total number of entries.
+expected_probs <- dnbinom(y, size = theta_est, mu = mu_est)
+expected_freq <- expected_probs * total_entries
+
+# Create the comparison dataframe
+comparison <- data.frame(
+  Count = y,
+  Observed = freq,
+  Expected = expected_freq
+)
+
+print(comparison)
+
+# Melt the dataframe for plotting using ggplot2 (long format)
+comparison_melted <- melt(comparison, id.vars = "Count", variable.name = "Type", value.name = "Frequency")
+
+p <- ggplot(comparison_melted, aes(x = Count, y = Frequency, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+
+  labs(title = "Observed vs Expected Frequencies", 
+       x = "Count", y = "Frequency (log scale)") +
+  theme_minimal()
+
+# Optionally, if focusing on low counts (say counts 0 to 10) improves visualization:
+p_zoom <- p + xlim(-1, 10)
+
+# Print the plot(s)
+print(p)
+print(p_zoom + scale_y_sqrt())
+
+```
+
