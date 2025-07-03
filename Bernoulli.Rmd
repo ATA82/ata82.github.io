@@ -1,0 +1,193 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## Bernoulli Distribution
+
+### Story
+
+Imagine you’re a scientist trying to determine whether a particular bacterium can
+survive a certain antibiotic. You place one bacterium in a petri dish with the 
+antibiotic and wait: will it survive (**success**, coded as 1), or will it not 
+survive (**failure**, coded as 0)? Each experiment like this is called a 
+**Bernoulli trial**—an event with just two possible outcomes.
+
+Whenever you have an experiment or process that results in exactly two outcomes,
+one of which you care about (success, coded as 1) and the other not (failure, 
+coded as 0), the **Bernoulli distribution** is your mathematical model for the 
+outcome.
+
+### Parameter
+
+* **θ (theta):** The probability that the trial results in success (y = 1).
+
+  * θ is a number between 0 and 1.
+
+### Support
+
+* The Bernoulli random variable, **y**, can only take the values 0 or 1.
+
+### Probability Mass Function
+
+$$
+P(y; \theta) =
+\begin{cases}
+1 - \theta, & y = 0 \\
+\theta, & y = 1 \\
+\end{cases}
+$$
+
+### Example (in R)
+
+Suppose the probability that a bacterium survives the antibiotic is **θ = 0.2**.
+
+You want to simulate the result of this experiment—will a single bacterium survive?
+
+```{r}
+theta <- 0.2
+# Simulate the outcome (0 = not survive, 1 = survive)
+result <- rbinom(n = 1, size = 1, prob = theta)
+cat("Did the bacterium survive? (1 = Yes, 0 = No):", result, "\n")
+```
+
+#### Multiple Trials
+
+If you repeat the experiment with 10 bacteria:
+
+```{r}
+theta <- 0.2
+results <- rbinom(n = 10, size = 1, prob = theta)
+cat("Survival outcomes of 10 bacteria:", results, "\n")
+```
+
+### Usage in R
+
+| Package    | Syntax                        |
+| ---------- | ----------------------------- |
+| **Base R** | `rbinom(n, 1, theta)`         |
+| **stats**  | `dbinom(y, 1, theta)` for PMF |
+
+### Related Distributions
+
+* The Bernoulli distribution is a special case of the **Binomial** distribution
+with `size = 1`.
+* If you sum up several independent Bernoulli trials, you get a Binomial-
+distributed variable.
+
+### Quick Visualization
+
+```{r}
+theta <- 0.2
+barplot(
+  height = c(1-theta, theta),
+  names.arg = c("0 (failure)", "1 (success)"),
+  ylab = "Probability",
+  main = "Bernoulli Distribution (θ = 0.2)"
+)
+```
+
+---
+
+**Summary**:
+The Bernoulli distribution describes the outcome of a single yes/no experiment, 
+parametrized by the probability of success. In R, simulate a Bernoulli trial 
+using `rbinom(1, 1, theta)`.
+
+
+## Geometric Distribution
+
+### Story
+
+Suppose you’re trying to find the first bacterium in a sequence that is competent 
+(for example, able to take up DNA), and each bacterium has a probability **θ** of 
+being competent. You check each bacterium one by one, and you stop as soon as 
+you find the first competent one. The number of bacteria you test until the 
+first success (competent bacterium) follows a **Geometric distribution**.
+
+The Geometric distribution models the number of *failures* before the first 
+success in a sequence of independent Bernoulli trials, each with the same 
+probability of success.
+
+### Parameter
+
+* **θ (theta):** The probability that any single trial results in success 
+(success = 1).
+
+  * θ is a number between 0 and 1.
+
+### Support
+
+* The Geometric random variable, **y**, can take any non-negative integer 
+value: 0, 1, 2, ...
+
+  * (Here, **y** is the number of failures before the first success.)
+
+### Probability Mass Function
+
+$$
+P(y; \theta) = (1 - \theta)^y \theta,\quad y = 0, 1, 2, ...
+$$
+
+### Example (in R)
+
+Suppose the probability that a bacterium is competent is **θ = 0.2**.
+
+You want to simulate how many bacteria you need to test before you find the 
+first competent one.
+
+```{r}
+theta <- 0.2
+# Simulate the number of failures before the first success
+failures_before_success <- rgeom(n = 1, prob = theta)
+cat("Number of failures before first competent bacterium:", failures_before_success, "\n")
+```
+
+#### Multiple Trials
+
+If you repeat the experiment 10 times:
+
+```{r}
+theta <- 0.2
+failures_list <- rgeom(n = 10, prob = theta)
+cat("Failures before first competent bacterium in 10 experiments:", failures_list, "\n")
+```
+
+### Usage in R
+
+| Package    | Syntax                    |
+| ---------- | ------------------------- |
+| **Base R** | `rgeom(n, theta)`         |
+| **stats**  | `dgeom(y, theta)` for PMF |
+
+### Related Distributions
+
+* The Geometric distribution describes the number of failures before the first 
+success ("zero-based").
+* The waiting time (counting the trial that is the first success) is sometimes 
+called the "shifted" Geometric distribution.
+* The Geometric is closely related to the Bernoulli and Negative Binomial 
+distributions.
+
+### Quick Visualization
+
+```{r}
+theta <- 0.2
+y_vals <- 0:10
+pmf_vals <- dgeom(y_vals, prob = theta)
+barplot(
+  pmf_vals,
+  names.arg = y_vals,
+  xlab = "Number of failures before first success",
+  ylab = "Probability",
+  main = "Geometric Distribution (θ = 0.2)"
+)
+```
+
+---
+
+**Summary**:
+The Geometric distribution models how many failures occur before the first 
+success in a sequence of independent Bernoulli trials. In R, simulate with 
+`rgeom(1, theta)`.
+

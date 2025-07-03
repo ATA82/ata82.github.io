@@ -32,18 +32,18 @@ of a bioinformatician. This is my main focus at the moment.
 However, from time to time I may revisit my roots as a computer scientist and 
 provide content on general topics in this field, including the subject of our 
 time, **Artificial Intelligence**. And because I believe that science and ethics 
-must go hand in hand, I might also address broader ethical questions related to 
-science.
+must go hand in hand, I might also address ethical questions related to science.
 
-My overall aim is to make complex topics within my field more accessible and engaging.
+My overall aim is to make complex topics within my field more accessible and 
+engaging.
 
 ---
 
 ## About Me
 
-I'm a dedicated bioinformatician passionate about the intersection of biology, 
-medicine, and data science. With an advanced background in bioinformatics research, 
-I specialize in transforming complex data into clear, actionable insights. 
+I'm a dedicated bioinformatician at the intersection of biology, medicine, and 
+data science. With an advanced background in bioinformatics research, I 
+specialize in transforming complex data into clear, actionable insights. 
 
 My work is rooted in:
 - **Omics Data Analysis:** Leveraging transcriptomics, genomics proteomics, and 
@@ -60,4 +60,4 @@ foster a collaborative and transparent scientific community.
 I believe that making the complexities at the convergence of biology, medicine, 
 and data science accessible empowers researchers, students, and enthusiasts alike.
 
-*For updates, subscribe to my newsletter or follow us on GitHub.*
+*For updates follow me on GitHub.*
